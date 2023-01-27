@@ -1386,6 +1386,6 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
 int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
 		int optlen);
 
-asmlinkage long sys_isolate_cpu(int cpuid);
+asmlinkage long sys_isolate_cpu(void);
 asmlinkage long sys_sched_setaffinity(int pid);
 #endif

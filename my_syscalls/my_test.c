@@ -1,38 +1,19 @@
 #include <linux/kernel.h>
 #include <linux/syscalls.h>
-//#include <linux/cpu.h>
-//#include <linux/sched/isolation.h>
 #include <linux/fs.h>
-//#include <linux/fsnotify.h>
 #include <../fs/internal.h>
 
-
-
-struct filename* my_getname(const char* filename)
-{
-    struct filename *result;
-    char *kname;
-
-    result = __getname();
-
-    kname = (char *)result -> iname;
-    result -> name = kname;
-
-    strcpy(kname, filename);
-
-    result -> refcnt = 1;
-    result -> uptr = NULL;
-    result -> aname = NULL;
-
-    return result;
-}
-
+/*
+*   The function my_mount uses char pointers from the kernel space 
+*   Allocates memory in the kernel space, to get struct filename
+*   and ultimately calls path_mount
+*/
 int my_mount(char* source, char * dest, char* filesystem, unsigned long flags, void* data)
 {
     struct path path;
     int ret;
 
-    struct filename* filename = my_getname(dest);
+    struct filename* filename = getname_kernel(dest);
     ret = filename_lookup(AT_FDCWD, filename, flags, &path, NULL);
 
     putname(filename);
@@ -44,41 +25,13 @@ int my_mount(char* source, char * dest, char* filesystem, unsigned long flags, v
     path_put(&path);
     return ret;
 }
-/*int my_open(char* filename, int flags){
 
-    if (force_o_largefile())
-		flags |= O_LARGEFILE;
-
-    umode_t mode = 0;
-
-    int dfd = AT_FDCWD;
-
-    struct open_how how_struct = build_open_how(flags, mode);
-	struct open_how * how = &how_struct;
-
-    struct open_flags op;
-	int fd = build_open_flags(how, &op);
-	struct filename *tmp;
-
-	if (fd)
-		return fd;
-
-    fd = get_unused_fd_flags(how->flags);
-	if (fd >= 0) {
-		struct file *f = filp_open(filename, flags, mode);//do_filp_open(dfd, tmp, &op);
-		if (IS_ERR(f)) {
-			put_unused_fd(fd);
-			fd = PTR_ERR(f);
-		} else {
-			fsnotify_open(f);
-			fd_install(fd, f);
-		}
-	}
-	return fd;
-}
-
+/*
+*   Mimics the transfer of jobs as per the script :
+*   while read P; do echo $P > /cpusets/housekeeping/tasks; done < /cpusets/tasks
 */
-int copy_file(char* dest_filename, char* source_filename){
+
+int transfer_tasks(char* dest_filename, char* source_filename){
     struct file *src  = filp_open(source_filename, O_RDWR, 0);
     struct file *dest;
     char buf[100];
@@ -110,84 +63,40 @@ int copy_file(char* dest_filename, char* source_filename){
     filp_close(src, NULL);
     return 0;
 }
-SYSCALL_DEFINE1(isolate_cpu, int , cpuid){
-    
-    /*umode_t mode=0;
-    int fd;
-    printk("trying to open file\n");
-    char path []= "abc.txt";
-    fd=my_open(path, O_RDWR);//do_sys_open(-100,"abc.txt", O_RDWR,mode);
-    printk("Returned file descriptor = %d\n", fd);
-    printk("Trying to write to file\n");
-    //work_with_this write
-    ksys_write(fd, "I AM ABHISHEK\n", 14);*/
 
-    // struct file *f = filp_open("pqr.txt", O_RDWR, 0);
-    // long long offset=0;
-    // kernel_write(f, "I AM ABHISHEK", 13, &offset);
-    // filp_close(f, NULL);
-    // offset=10;
-    // f = filp_open("pqr.txt", O_RDWR, 0);
-    // kernel_write(f, "I AM HITECH", 11, &offset);
-    // filp_close(f, NULL);
+/*  
+*   The hack for isolating the cpu makes use of cpusets.
+*   The functionality mimiced is that done by the following script 
+*   mkdir /cpusets
+*   mount -t cpuset none /cpusets
+*   mkdir /cpusets/housekeeping
+*   mkdir /cpusets/isolated
+*   echo 1-3 > /cpusets/housekeeping/cpus
+*   echo 0 > /cpusets/isolated/cpus
+*   echo 0 > /cpusets/housekeeping/mems
+*   echo 0 > /cpusets/isolated/mems
+*   echo 0 > /cpusets/isolated/sched_load_balance
+*   echo 0 > /cpusets/sched_load_balance
+*   while read P ; do echo $P > /cpusets/housekeeping/tasks ; done < /cpusets/tasks
+ */
 
-    /*printk("Offset after first write = %lld\n", offset);
-
-    kernel_write(f, "I AM ABHISHEK", 13, 0);
-    printk("Offset after second write = %lld\n", offset);
-    */
-
-    /*struct file *f = filp_open("file.txt", O_RDWR, 0);
-    long long offset=0;
-    char buf [10];
-    int copy=cpuid;
-    int digit_count=0;
-    int count=0;
-    while(copy){
-        copy/=10;
-        digit_count++;
-    }
-    count = digit_count+1;
-    buf[digit_count+1]=0;
-    buf[digit_count--]='\n';
-    while (cpuid){
-        buf[digit_count--]= cpuid%10+'0';
-        cpuid/=10;
-    }*/
-    //printk("%s, %d", buf, count);
-    //kernel_write(f, buf, count, &offset);
-    //kernel_write(f, buf, count, &offset);
-
-
-    // printk("Trying to copy files\n");
-    
-    // copy_file("abc_copy.txt", "abc.txt");
-
-    // printk("Trying to make a directory\n");
-    // do_mkdirat(AT_FDCWD, my_getname("/dev/cpuset"), 0);
-
-    // printk("Trying to mount the cpuset file system");
-
-    // my_mount(0, "/cpusets", "cpuset", 0, 0);    
-    // remove_cpu(cpuid);
-    // //printk("This message is printed from a system call by Abhishek Ghosh");
-    // housekeeping_isolcpus_setup("domain,managed_irq,0");
-    // housekeeping_nohz_full_setup("0");
-    // add_cpu(cpuid);
+SYSCALL_DEFINE0(isolate_cpu){
 
     struct file *f ;
     long long offset = 0;
     printk("Trying to make /cpusets directory ....\n");
-    do_mkdirat(AT_FDCWD, my_getname("/cpusets"),0);
+    do_mkdirat(AT_FDCWD, getname_kernel("/cpusets"),0); 
+    //no need to free the struct filename, do_mkdirat 
+    //internally does that
     
     printk("Trying to mount the cpuset filesystem at /cpusets");
     my_mount(0, "/cpusets", "cpuset", 0, 0);
 
     printk("Trying to make the directory /cpusets/housekeeping\n");
-    do_mkdirat(AT_FDCWD, my_getname("/cpusets/housekeeping"),0);
+    do_mkdirat(AT_FDCWD, getname_kernel("/cpusets/housekeeping"),0);
     
     printk("Trying to make the directory /cpusets/isolated\n");
-    do_mkdirat(AT_FDCWD, my_getname("/cpusets/isolated"),0);
+    do_mkdirat(AT_FDCWD, getname_kernel("/cpusets/isolated"),0);
 
     printk("Writing 1-3 to /cpusets/housekeeping/cpus\n");
     f = filp_open("/cpusets/housekeeping/cpus", O_RDWR, 0);
@@ -226,11 +135,16 @@ SYSCALL_DEFINE1(isolate_cpu, int , cpuid){
     filp_close(f, NULL);
 
     printk("Trying to transfer tasks to housingkeeping...\n");
-    copy_file("/cpusets/housekeeping/tasks", "/cpusets/tasks");
-
-
+    transfer_tasks("/cpusets/housekeeping/tasks", "/cpusets/tasks");
     return 0;
 }
+
+/*
+* The following system call, is used of assigning a process to the 
+* isolated cpu 0. In short it does the following
+* PID=123 #if 123 is the pid of the proccess to be assigned to cpu0
+* echo $PID > /cpusets/isolated/tasks 
+*/
 
 SYSCALL_DEFINE1(my_sched_setaffinity, int , pid){
 
